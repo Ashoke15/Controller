@@ -34,6 +34,13 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustNothing"/>
 
+        <activity
+            android:name=".joystick.compose.JoystickActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:exported="true" />
+
     </application>
 
 </manifest>

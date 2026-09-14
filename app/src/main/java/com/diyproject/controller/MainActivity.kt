@@ -92,6 +92,13 @@ class MainActivity : AppCompatActivity() {
                 val intent = android.content.Intent(this, ControlActivity::class.java)
                 startActivity(intent)
             }
+            "joystick" -> {
+                val intent = android.content.Intent(
+                    this,
+                    com.diyproject.controller.joystick.compose.JoystickActivity::class.java
+                )
+                startActivity(intent)
+            }
 
         }
     }
