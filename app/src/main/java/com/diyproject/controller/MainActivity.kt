@@ -8,6 +8,11 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.view.animation.AnimationUtils
 import com.diyproject.controller.control.compose.ControlActivity
+import android.content.Intent
+import androidx.appcompat.app.AlertDialog
+import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
 
 
 class MainActivity : AppCompatActivity() {
@@ -25,6 +30,7 @@ class MainActivity : AppCompatActivity() {
         setupControlSection()
         setupDeveloperSection()
         setupTemplateSection()
+        setupActionButtons()
         setupFooter()
     }
 
@@ -112,5 +118,55 @@ class MainActivity : AppCompatActivity() {
             }
 
         }
+    }
+
+    private fun setupActionButtons() {
+        findViewById<View>(R.id.btnShare).setOnClickListener { shareApp() }
+        findViewById<View>(R.id.btnAbout).setOnClickListener { showAboutDialog() }
+    }
+
+    private fun shareApp() {
+        try {
+            val sourceApk = File(applicationInfo.sourceDir)
+            val shareDir = File(cacheDir, "apk_share").apply { mkdirs() }
+            val shareFile = File(shareDir, "${getString(R.string.app_name).replace(" ", "_")}.apk")
+            sourceApk.copyTo(shareFile, overwrite = true)
+
+            val apkUri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                shareFile
+            )
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(Intent.EXTRA_STREAM, apkUri)
+                putExtra(Intent.EXTRA_SUBJECT, getString(R.string.app_name))
+                putExtra(Intent.EXTRA_TEXT, getString(R.string.share_message))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, getString(R.string.btn_share)))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Couldn't share the app file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showAboutDialog() {
+        val versionName = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            "1.0.0"
+        }
+
+        val dialogView = layoutInflater.inflate(R.layout.dialog_about, null)
+        dialogView.findViewById<TextView>(R.id.tvAboutVersion).text = "Version $versionName"
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogView.findViewById<View>(R.id.tvAboutClose).setOnClickListener { dialog.dismiss() }
+        dialog.show()
     }
 }

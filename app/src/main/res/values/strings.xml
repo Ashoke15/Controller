@@ -10,6 +10,13 @@
     <string name="section_developer">Developer</string>
     <string name="section_car_templates">Car Templates</string>
     <string name="footer_version_default">RC Controller · v1.0.0</string>
-    <string name="footer_made_by">Made by DIY Project Labs</string>
+    <string name="footer_made_by">Made by Robotrix – The Robotics Club of GCELT</string>
     <string name="cd_app_icon">App icon</string>
+    <string name="btn_share">Share App</string>
+    <string name="btn_about">About</string>
+    <string name="cd_share">Share app</string>
+    <string name="cd_about">About app</string>
+    <string name="share_message">Check out RC Controller – build, connect and drive your DIY RC car over Bluetooth! Install the attached APK to get started.</string>
+    <string name="about_message">Build, connect, and drive your own DIY RC car over Bluetooth — button, joystick, and gyroscope control, a code console for raw commands, and ready-made car templates.</string>
+    <string name="btn_got_it">Got it</string>
 </resources>
