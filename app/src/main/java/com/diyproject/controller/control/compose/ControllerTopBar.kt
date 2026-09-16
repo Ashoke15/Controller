@@ -63,6 +63,7 @@ fun ControllerTopBar(
             icon = Icons.Filled.Lightbulb,
             isOn = headlightOn,
             contentDescription = "Headlight",
+            activeTint = Color(0xFFFFE082),
             onToggle = onHeadlightToggle
         )
 
@@ -71,6 +72,7 @@ fun ControllerTopBar(
             icon = Icons.Filled.LightMode,
             isOn = backlightOn,
             contentDescription = "Backlight",
+            activeTint = Color(0xFFFFB74D),
             onToggle = onBacklightToggle
         )
 
@@ -78,6 +80,7 @@ fun ControllerTopBar(
         GlassMomentaryButton(
             icon = Icons.Filled.Campaign,
             contentDescription = "Horn",
+            activeTint = Color(0xFFFF7043),
             onPress = onHornPress,
             onRelease = onHornRelease
         )
@@ -87,6 +90,7 @@ fun ControllerTopBar(
             icon = Icons.Filled.Warning,
             isOn = hazardOn,
             contentDescription = "Hazard",
+            activeTint = Color(0xFFFF3D00),
             onToggle = onHazardToggle
         )
 
@@ -184,6 +188,7 @@ private fun StopButton(onClick: () -> Unit) {
 private fun GlassMomentaryButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
+    activeTint: Color,
     onPress: () -> Unit,
     onRelease: () -> Unit
 ) {
@@ -194,7 +199,7 @@ private fun GlassMomentaryButton(
         modifier = Modifier
             .size(ControllerDimens.iconButtonSize)
             .clip(ControllerShapes.glassButton)
-            .background(Color.White.copy(alpha = if (isPressed) 0.08f else 0.04f))
+            .background(if (isPressed) activeTint.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.04f))
             .border(1.dp, ControllerColors.glassBorder, ControllerShapes.glassButton)
             .pointerInput(Unit) {
                 awaitEachGesture {
@@ -212,9 +217,20 @@ private fun GlassMomentaryButton(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = ControllerColors.textPrimary.copy(alpha = alpha),
+            tint = if (isPressed) activeTint else ControllerColors.textPrimary.copy(alpha = alpha),
             modifier = Modifier.size(20.dp)
         )
+
+        if (isPressed) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
+                    .background(activeTint, shape = CircleShape)
+                    .border(1.dp, Color.White, CircleShape)
+            )
+        }
     }
 }
 
@@ -231,6 +247,7 @@ private fun VerticalSpeedSlider(
         onValueChange = onSpeedChange,
         onValueChangeFinished = onSpeedCommit,
         valueRange = 0f..100f,
+        steps = 9,
         modifier = Modifier
             .width(200.dp)
             .height(60.dp),

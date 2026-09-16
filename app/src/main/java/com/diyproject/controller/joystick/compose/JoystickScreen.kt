@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -18,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.diyproject.controller.control.compose.TopBarActions
 import com.diyproject.controller.control.compose.TopBarState
@@ -43,12 +47,14 @@ data class JoystickCallbacks(
     val onToggleSound: (Boolean) -> Unit = {},
     val onToggleWarning: (Boolean) -> Unit = {},
     val onSettingsClick: () -> Unit = {},
-    val onStopClick: () -> Unit = {}
+    val onStopClick: () -> Unit = {},
+    val onToggleMotionControl: () -> Unit = {}
 )
 
 @Composable
 fun JoystickScreen(
     isConnected: Boolean,
+    motionControlEnabled: Boolean = false,
     callbacks: JoystickCallbacks = JoystickCallbacks(),
     modifier: Modifier = Modifier
 ) {
@@ -110,6 +116,28 @@ fun JoystickScreen(
                 )
             )
 
+            // Motion (gyroscope) steering toggle. Kept as a standalone row
+            // here rather than folded into TopControllerBar, since that
+            // component wasn't available to edit directly.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Motion Steering",
+                    color = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Switch(
+                    checked = motionControlEnabled,
+                    onCheckedChange = { callbacks.onToggleMotionControl() },
+                    colors = SwitchDefaults.colors()
+                )
+            }
+
             // Dual Joystick Layout for Landscape Mode
             Row(
                 modifier = Modifier
@@ -133,7 +161,7 @@ fun JoystickScreen(
                         .padding(16.dp)
                 )
 
-                // Right Joystick
+                // Right Joystick — independent pan/tilt (gimbal) axis, not drive
                 JoystickPad(
                     actions = JoystickActions(
                         onVectorChange = callbacks.onRightVectorChange,

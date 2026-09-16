@@ -28,6 +28,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 // ---------- Direction state ----------
 
@@ -127,36 +131,68 @@ private fun MultiTouchControlPanel(
     // Track which directions are currently held by pointer ID
     val heldDirections = remember { mutableStateMapOf<PointerId, String>() }
 
-    // Resolve combined direction and fire command
+    // Resend loop: keeps re-affirming the held command every 200ms so a single
+    // dropped serial packet, or a firmware inactivity watchdog, can't stop the
+    // car while the finger is still down.
+    val scope = rememberCoroutineScope()
+    var heartbeatJob by remember { mutableStateOf<Job?>(null) }
+
+    fun commandForDirection(dir: ActiveDirection): (() -> Unit)? = when (dir) {
+        ActiveDirection.FORWARD_LEFT  -> actions.onForwardLeftPress
+        ActiveDirection.FORWARD_RIGHT -> actions.onForwardRightPress
+        ActiveDirection.BACK_LEFT     -> actions.onBackLeftPress
+        ActiveDirection.BACK_RIGHT    -> actions.onBackRightPress
+        ActiveDirection.FORWARD       -> actions.onForwardPress
+        ActiveDirection.BACK          -> actions.onBackPress
+        ActiveDirection.LEFT          -> actions.onLeftPress
+        ActiveDirection.RIGHT         -> actions.onRightPress
+        ActiveDirection.NONE          -> null
+    }
+
+    // Resolve combined direction and (re)start/stop the heartbeat
     fun resolve() {
         val held = heldDirections.values.toSet()
         val dir = when {
-            held.contains("UP") && held.contains("LEFT")  -> {
-                actions.onForwardLeftPress(); ActiveDirection.FORWARD_LEFT }
-            held.contains("UP") && held.contains("RIGHT") -> {
-                actions.onForwardRightPress(); ActiveDirection.FORWARD_RIGHT }
-            held.contains("DOWN") && held.contains("LEFT") -> {
-                actions.onBackLeftPress(); ActiveDirection.BACK_LEFT }
-            held.contains("DOWN") && held.contains("RIGHT") -> {
-                actions.onBackRightPress(); ActiveDirection.BACK_RIGHT }
-            held.contains("UP")    -> { actions.onForwardPress(); ActiveDirection.FORWARD }
-            held.contains("DOWN")  -> { actions.onBackPress();    ActiveDirection.BACK }
-            held.contains("LEFT")  -> { actions.onLeftPress();    ActiveDirection.LEFT }
-            held.contains("RIGHT") -> { actions.onRightPress();   ActiveDirection.RIGHT }
-            else -> { actions.onStopAllClick(); ActiveDirection.NONE }
+            held.contains("UP") && held.contains("LEFT")   -> ActiveDirection.FORWARD_LEFT
+            held.contains("UP") && held.contains("RIGHT")  -> ActiveDirection.FORWARD_RIGHT
+            held.contains("DOWN") && held.contains("LEFT") -> ActiveDirection.BACK_LEFT
+            held.contains("DOWN") && held.contains("RIGHT")-> ActiveDirection.BACK_RIGHT
+            held.contains("UP")    -> ActiveDirection.FORWARD
+            held.contains("DOWN")  -> ActiveDirection.BACK
+            held.contains("LEFT")  -> ActiveDirection.LEFT
+            held.contains("RIGHT") -> ActiveDirection.RIGHT
+            else -> ActiveDirection.NONE
         }
+
+        heartbeatJob?.cancel()
         onDirectionChanged(dir)
+
+        val send = commandForDirection(dir)
+        if (send == null) {
+            actions.onDiagonalRelease()
+            return
+        }
+
+        send() // fire immediately, matching the old on-press behavior
+        heartbeatJob = scope.launch {
+            while (isActive) {
+                delay(200)
+                send()
+            }
+        }
     }
 
     fun buttonPointerInput(label: String) = Modifier.pointerInput(label) {
         awaitEachGesture {
             val down = awaitPointerEvent().changes.firstOrNull() ?: return@awaitEachGesture
+            down.consume()
             heldDirections[down.id] = label
             resolve()
             // Wait until this pointer lifts
             while (true) {
                 val event = awaitPointerEvent()
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                change.consume()
                 if (!change.pressed) break
             }
             heldDirections.remove(down.id)

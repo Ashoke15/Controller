@@ -21,10 +21,12 @@ object CarCommand {
     const val EXTRA_OFF = "x"
     const val STOP_ALL = "D"
 
-    /** Speed 0-100 (in steps of 10) -> single char per firmware table. */
+    /** Speed 0-100 (in steps of 10) -> single char per firmware table.
+     *  Rounds to the NEAREST step rather than flooring, so e.g. 95-100
+     *  all resolve to max ("q") instead of only exactly 100. */
     fun speedToChar(speedPercent: Int): String {
         val clamped = speedPercent.coerceIn(0, 100)
-        val step = (clamped / 10).coerceIn(0, 10)
+        val step = ((clamped + 5) / 10).coerceIn(0, 10)
         return if (step == 10) "q" else step.toString()
     }
 }

@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Controller</string>
+    <string name="bt_status_connecting">Connecting…</string>
+    <string name="bt_status_connected">Connected</string>
+    <string name="bt_status_tap_to_connect">Tap to connect</string>
+    <string name="speed_percent_format">%1$d%%</string>
 </resources>

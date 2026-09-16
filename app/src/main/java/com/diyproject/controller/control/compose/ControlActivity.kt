@@ -57,6 +57,7 @@ class ControlActivity : ComponentActivity() {
         var showCommandList by mutableStateOf(false)
 
         bt = BluetoothSppManager(
+            context = this,
             onConnected = { isConnected = true },
             onDisconnected = { isConnected = false },
             onError = { msg ->

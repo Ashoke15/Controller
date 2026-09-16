@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
@@ -101,6 +102,7 @@ fun GlassIconToggleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     isOn: Boolean,
     contentDescription: String,
+    activeTint: Color = ControllerColors.glowCyan,
     onToggle: () -> Unit
 ) {
     val alpha by animateFloatAsState(if (isOn) 1f else 0.5f, label = "toggleAlpha")
@@ -108,7 +110,7 @@ fun GlassIconToggleButton(
         modifier = modifier
             .size(ControllerDimens.iconButtonSize)
             .clip(ControllerShapes.glassButton)
-            .background(Color.White.copy(alpha = 0.04f))
+            .background(if (isOn) activeTint.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.04f))
             .border(1.dp, ControllerColors.glassBorder, ControllerShapes.glassButton)
             .pointerInput(Unit) {
                 detectTapGestures { onToggle() }
@@ -122,5 +124,16 @@ fun GlassIconToggleButton(
             tint = ControllerColors.textPrimary.copy(alpha = alpha),
             modifier = Modifier.size(20.dp)
         )
+
+        if(isOn) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
+                    .background(activeTint, shape = CircleShape)
+                    .border(1.dp, Color.White, CircleShape)
+            )
+        }
     }
 }
