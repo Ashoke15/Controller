@@ -1,7 +1,15 @@
 <resources>
-    <string name="app_name">Controller</string>
+    <string name="app_name">RC Controller</string>
     <string name="bt_status_connecting">Connecting…</string>
     <string name="bt_status_connected">Connected</string>
     <string name="bt_status_tap_to_connect">Tap to connect</string>
     <string name="speed_percent_format">%1$d%%</string>
+    <string name="tagline">Build. Connect. Drive.</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="section_control">Control</string>
+    <string name="section_developer">Developer</string>
+    <string name="section_car_templates">Car Templates</string>
+    <string name="footer_version_default">RC Controller · v1.0.0</string>
+    <string name="footer_made_by">Made by DIY Project Labs</string>
+    <string name="cd_app_icon">App icon</string>
 </resources>

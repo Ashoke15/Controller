@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
         setupControlSection()
         setupDeveloperSection()
         setupTemplateSection()
+        setupFooter()
     }
 
     override fun onResume() {
@@ -48,6 +49,16 @@ class MainActivity : AppCompatActivity() {
             pill.setBackgroundResource(R.drawable.bg_status_pill_off)
             dot.setBackgroundResource(R.drawable.bg_status_pill_off)
             dot.clearAnimation()
+        }
+    }
+
+    private fun setupFooter() {
+        val tvFooter = findViewById<TextView>(R.id.tvAppFooter)
+        try {
+            val pInfo = packageManager.getPackageInfo(packageName, 0)
+            tvFooter.text = "RC Controller · v${pInfo.versionName}"
+        } catch (e: Exception) {
+            tvFooter.text = "RC Controller"
         }
     }
 
