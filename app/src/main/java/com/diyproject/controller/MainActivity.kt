@@ -118,6 +118,13 @@ class MainActivity : AppCompatActivity() {
                 )
                 startActivity(intent)
             }
+            "gyro" -> {
+                val intent = android.content.Intent(
+                    this,
+                    com.diyproject.controller.gyro.compose.GyroActivity::class.java
+                )
+                startActivity(intent)
+            }
 
         }
     }

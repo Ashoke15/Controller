@@ -53,6 +53,12 @@
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:exported="true" />
 
+        <activity
+            android:name=".gyro.compose.GyroActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
     </application>
 
 </manifest>
