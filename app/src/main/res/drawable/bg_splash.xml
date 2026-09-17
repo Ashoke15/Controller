@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 1. The solid background color -->
+    <item>
+        <color android:color="#0A0E14"/>
+    </item>
+
+    <!-- 2. The Perfectly Scaled Logo (Centered in the middle) -->
+    <item
+        android:width="350dp"
+        android:height="350dp"
+        android:gravity="center"
+        android:drawable="@drawable/robotrix_logo" />
+
+    <!-- 3. The Tagline (Placed at the bottom) -->
+    <item
+        android:width="250dp"
+        android:height="60dp"
+        android:gravity="bottom|center_horizontal"
+        android:bottom="60dp"
+        android:drawable="@drawable/tagline_logo" /> <!-- Your text image -->
+
+</layer-list>

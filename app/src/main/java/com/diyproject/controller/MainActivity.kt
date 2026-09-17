@@ -21,6 +21,8 @@ class MainActivity : AppCompatActivity() {
     private val btHelper = BluetoothStatusHelper()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_Controller)
+
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 

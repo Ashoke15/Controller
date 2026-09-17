@@ -50,13 +50,13 @@
         android:gravity="center"/>
 
     <TextView
-        android:layout_width="wrap_content"
+        android:layout_width="265dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         android:alpha="0.6"
         android:text="@string/footer_made_by"
         android:textColor="@color/text_secondary"
-        android:textSize="11sp"/>
+        android:textSize="11sp" />
 
     <TextView
         android:id="@+id/tvAboutClose"
