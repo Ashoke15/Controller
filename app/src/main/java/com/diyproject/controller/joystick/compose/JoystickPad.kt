@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -26,20 +27,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import com.diyproject.controller.control.compose.ControllerColors
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -51,62 +49,114 @@ import kotlin.math.sqrt
  * "full right" — [JoystickPad] reports both axes, [AxisStick] reports only
  * its locked axis (the other component is always 0).
  *
- * [onVectorChange] fires on every drag update — use it for immediate,
- * event-driven sending. [onVectorRepeat] is optional and, if you supply it,
- * fires every [repeatIntervalMs] while the knob is held away from center —
- * a protocol keep-alive, mirroring the D-pad's hold-to-repeat behavior.
- * [onReleased] fires once, after the knob has already animated back to
- * (0,0), when the finger lifts or the gesture is cancelled.
+ * [onVectorChange] fires on every drag update. There's no repeat-while-held
+ * timer here on purpose — [RcTransmitter] is what actually keeps streaming
+ * the last known values to the car at a fixed rate, mirroring how a real
+ * transmitter's frame loop works, so the UI layer doesn't need its own
+ * "keep sending" workaround too. [onReleased] fires once, after the knob
+ * has already animated back to (0,0), when the finger lifts or the gesture
+ * is cancelled.
  */
 data class JoystickActions(
     val onDragStart: () -> Unit = {},
     val onVectorChange: (x: Float, y: Float) -> Unit = { _, _ -> },
-    val onVectorRepeat: (x: Float, y: Float) -> Unit = { _, _ -> },
-    val onReleased: () -> Unit = {},
-    val repeatIntervalMs: Long = 120L
+    val onReleased: () -> Unit = {}
 )
 
 /**
- * A circular glass base with a draggable knob, free on both axes. Sizes
- * itself responsively to the space it's given via [BoxWithConstraints].
+ * A circular glass base with a draggable knob, free on both axes — a
+ * FlySky-style gimbal: crosshair guides, cardinal tick marks, and a
+ * visual deadzone ring so the player can see exactly where the stick's
+ * shaped output actually starts moving. Sizes itself responsively to the
+ * space it's given via [BoxWithConstraints].
  *
- * Kept around as a general-purpose free-roam pad (e.g. for other screens);
- * the main driving screen uses [AxisStick] instead — see [JoystickScreen].
+ * Both sticks on [JoystickScreen] use this — steering+throttle on the
+ * left, pan+tilt on the right — since a real transmitter's channels are
+ * all proportional analog on both axes, not snapped to directions.
+ *
+ * While dragging, the knob position is a plain [mutableStateOf] written
+ * directly from the drag callback — no coroutine launch per touch event —
+ * so it tracks the finger with no extra dispatch latency. [Animatable] is
+ * only used for the one-time spring-back to center on release/cancel.
  */
 @Composable
 fun JoystickPad(
     actions: JoystickActions,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    accentColor: Color = ControllerTheme.cyan,
+    deadzoneRadiusFraction: Float = 0.08f
 ) {
     BoxWithConstraints(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
         val baseDiameter = min(this.maxWidth, this.maxHeight)
-        val knobDiameter = baseDiameter * 0.42f
+        val knobDiameter = baseDiameter * 0.4f
         val density = LocalDensity.current
         val maxOffsetPx = with(density) { ((baseDiameter - knobDiameter) / 2f).toPx() }
         val haptics = LocalHapticFeedback.current
+        val latestActions by rememberUpdatedState(actions)
 
-        val knobOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+        // Live drag position — direct writes, no animation, no coroutine.
+        var knobOffset by remember { mutableStateOf(Offset.Zero) }
+        // Used only to animate the knob back to center on release/cancel.
+        val springBack = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
         val scope = rememberCoroutineScope()
-        var repeatJob: Job? by remember { mutableStateOf<Job?>(null) }
 
         fun vectorFor(offset: Offset): Pair<Float, Float> {
             if (maxOffsetPx <= 0f) return 0f to 0f
             return (offset.x / maxOffsetPx) to (offset.y / maxOffsetPx)
         }
 
-        // Base pad: frosted circle with a thin glowing ring, matching the
-        // rest of the controller's glass language.
+        fun recenter() {
+            scope.launch {
+                springBack.snapTo(knobOffset)
+                springBack.animateTo(
+                    Offset.Zero,
+                    spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) { knobOffset = value }
+                latestActions.onVectorChange(0f, 0f)   // was actions.
+                latestActions.onReleased()
+            }
+        }
+
+        // Base pad: frosted circle with a thin glowing ring.
         Box(
             modifier = Modifier
                 .size(baseDiameter)
                 .clip(CircleShape)
-                .background(ControllerColors.glassFill)
-                .border(1.dp, ControllerColors.glassBorder, CircleShape)
+                .background(ControllerTheme.panelFill)
+                .border(1.dp, ControllerTheme.panelBorder, CircleShape)
         )
+
+        // Instrument overlay: crosshair, deadzone ring, cardinal ticks.
+        Canvas(modifier = Modifier.size(baseDiameter)) {
+            val guide = accentColor.copy(alpha = 0.25f)
+            val hairline = 1.2.dp.toPx()
+
+            drawLine(guide, Offset(size.width / 2f, 6.dp.toPx()), Offset(size.width / 2f, size.height - 6.dp.toPx()), strokeWidth = hairline)
+            drawLine(guide, Offset(6.dp.toPx(), size.height / 2f), Offset(size.width - 6.dp.toPx(), size.height / 2f), strokeWidth = hairline)
+
+            if (maxOffsetPx > 0f) {
+                drawCircle(
+                    color = guide,
+                    radius = maxOffsetPx * deadzoneRadiusFraction,
+                    center = center,
+                    style = Stroke(width = hairline)
+                )
+            }
+
+            val tick = 6.dp.toPx()
+            val edge = 3.dp.toPx()
+            drawLine(guide, Offset(size.width / 2f, edge), Offset(size.width / 2f, edge + tick), strokeWidth = hairline * 1.4f)
+            drawLine(guide, Offset(size.width / 2f, size.height - edge), Offset(size.width / 2f, size.height - edge - tick), strokeWidth = hairline * 1.4f)
+            drawLine(guide, Offset(edge, size.height / 2f), Offset(edge + tick, size.height / 2f), strokeWidth = hairline * 1.4f)
+            drawLine(guide, Offset(size.width - edge, size.height / 2f), Offset(size.width - edge - tick, size.height / 2f), strokeWidth = hairline * 1.4f)
+        }
 
         // Draggable knob.
         Box(
@@ -114,65 +164,38 @@ fun JoystickPad(
                 .size(knobDiameter)
                 .offset {
                     IntOffset(
-                        knobOffset.value.x.roundToInt(),
-                        knobOffset.value.y.roundToInt()
+                        knobOffset.x.roundToInt(),
+                        knobOffset.y.roundToInt()
                     )
                 }
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            ControllerColors.glowCyan.copy(alpha = 0.35f),
+                            accentColor.copy(alpha = 0.35f),
                             Color.White.copy(alpha = 0.10f)
                         )
                     )
                 )
-                .border(1.5.dp, ControllerColors.glowCyan.copy(alpha = 0.6f), CircleShape)
+                .border(1.5.dp, accentColor.copy(alpha = 0.65f), CircleShape)
                 .semantics { contentDescription = "Joystick knob" }
                 .then(
                     if (enabled) {
-                        Modifier.pointerInput(actions, maxOffsetPx) {
+                        Modifier.pointerInput(maxOffsetPx) {
                             detectDragGestures(
                                 onDragStart = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    actions.onDragStart()
-                                    repeatJob?.cancel()
-                                    repeatJob = startRepeating(scope, actions.repeatIntervalMs) {
-                                        val (x, y) = vectorFor(knobOffset.value)
-                                        actions.onVectorRepeat(x, y)
-                                    }
+                                    latestActions.onDragStart()
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    val clamped = clampToRadius(knobOffset.value + dragAmount, maxOffsetPx)
-                                    scope.launch { knobOffset.snapTo(clamped) }
+                                    val clamped = clampToRadius(knobOffset + dragAmount, maxOffsetPx)
+                                    knobOffset = clamped
                                     val (x, y) = vectorFor(clamped)
-                                    actions.onVectorChange(x, y)
+                                    latestActions.onVectorChange(x, y)
                                 },
-                                onDragEnd = {
-                                    repeatJob?.cancel()
-                                    repeatJob = null
-                                    scope.launch {
-                                        knobOffset.animateTo(
-                                            Offset.Zero,
-                                            spring(
-                                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                stiffness = Spring.StiffnessMedium
-                                            )
-                                        )
-                                        actions.onVectorChange(0f, 0f)
-                                        actions.onReleased()
-                                    }
-                                },
-                                onDragCancel = {
-                                    repeatJob?.cancel()
-                                    repeatJob = null
-                                    scope.launch {
-                                        knobOffset.animateTo(Offset.Zero)
-                                        actions.onVectorChange(0f, 0f)
-                                        actions.onReleased()
-                                    }
-                                }
+                                onDragEnd = { recenter() },
+                                onDragCancel = { recenter() }
                             )
                         }
                     } else Modifier
@@ -181,9 +204,7 @@ fun JoystickPad(
 
         LaunchedEffect(enabled) {
             if (!enabled) {
-                repeatJob?.cancel()
-                repeatJob = null
-                knobOffset.snapTo(Offset.Zero)
+                knobOffset = Offset.Zero
             }
         }
     }
@@ -195,16 +216,22 @@ enum class StickAxis { VERTICAL, HORIZONTAL }
 /**
  * A single-axis gimbal — moves along one axis only and springs back to
  * center on release, like the throttle or steering stick on a real RC
- * transmitter (Mode 2 layout: throttle = vertical, steering = horizontal).
- * Reports through the same [JoystickActions] as [JoystickPad]; the locked
- * axis's component of (x, y) is always 0.
+ * transmitter (Mode 2 layout: throttle = vertical, steering =
+ * horizontal). Reports through the same [JoystickActions] as
+ * [JoystickPad]; the locked axis's component of (x, y) is always 0.
+ *
+ * Kept around as a general-purpose single-axis input (e.g. a standalone
+ * throttle slider elsewhere) — [JoystickScreen] currently drives both
+ * the left and right sticks with the free two-axis [JoystickPad]
+ * instead, since both need proportional X and Y at once.
  */
 @Composable
 fun AxisStick(
     axis: StickAxis,
     actions: JoystickActions,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    accentColor: Color = ControllerTheme.cyan
 ) {
     BoxWithConstraints(
         modifier = modifier,
@@ -217,9 +244,9 @@ fun AxisStick(
         val maxOffsetPx = with(density) { ((trackLength - knobDiameter) / 2f).toPx() }
         val haptics = LocalHapticFeedback.current
 
-        val knobOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+        var knobOffset by remember { mutableStateOf(Offset.Zero) }
+        val springBack = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
         val scope = rememberCoroutineScope()
-        var repeatJob: Job? by remember { mutableStateOf<Job?>(null) }
 
         fun vectorFor(offset: Offset): Pair<Float, Float> {
             if (maxOffsetPx <= 0f) return 0f to 0f
@@ -231,13 +258,28 @@ fun AxisStick(
             StickAxis.HORIZONTAL -> Offset(target.x.coerceIn(-maxOffsetPx, maxOffsetPx), 0f)
         }
 
+        fun recenter() {
+            scope.launch {
+                springBack.snapTo(knobOffset)
+                springBack.animateTo(
+                    Offset.Zero,
+                    spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) { knobOffset = value }
+                actions.onVectorChange(0f, 0f)
+                actions.onReleased()
+            }
+        }
+
         // Track: pill-shaped, oriented along the locked axis.
         Box(
             modifier = Modifier
                 .size(width = trackThickness, height = trackLength)
                 .clip(RoundedCornerShape(percent = 50))
-                .background(ControllerColors.glassFill)
-                .border(1.dp, ControllerColors.glassBorder, RoundedCornerShape(percent = 50))
+                .background(ControllerTheme.panelFill)
+                .border(1.dp, ControllerTheme.panelBorder, RoundedCornerShape(percent = 50))
         )
 
         // Knob, constrained to the track's axis.
@@ -246,20 +288,20 @@ fun AxisStick(
                 .size(knobDiameter)
                 .offset {
                     IntOffset(
-                        knobOffset.value.x.roundToInt(),
-                        knobOffset.value.y.roundToInt()
+                        knobOffset.x.roundToInt(),
+                        knobOffset.y.roundToInt()
                     )
                 }
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            ControllerColors.glowCyan.copy(alpha = 0.35f),
+                            accentColor.copy(alpha = 0.35f),
                             Color.White.copy(alpha = 0.10f)
                         )
                     )
                 )
-                .border(1.5.dp, ControllerColors.glowCyan.copy(alpha = 0.6f), CircleShape)
+                .border(1.5.dp, accentColor.copy(alpha = 0.65f), CircleShape)
                 .semantics {
                     contentDescription =
                         if (axis == StickAxis.VERTICAL) "Throttle stick" else "Steering stick"
@@ -271,43 +313,16 @@ fun AxisStick(
                                 onDragStart = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     actions.onDragStart()
-                                    repeatJob?.cancel()
-                                    repeatJob = startRepeating(scope, actions.repeatIntervalMs) {
-                                        val (x, y) = vectorFor(knobOffset.value)
-                                        actions.onVectorRepeat(x, y)
-                                    }
                                 },
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    val clamped = clampToAxis(knobOffset.value + dragAmount)
-                                    scope.launch { knobOffset.snapTo(clamped) }
+                                    val clamped = clampToAxis(knobOffset + dragAmount)
+                                    knobOffset = clamped
                                     val (x, y) = vectorFor(clamped)
                                     actions.onVectorChange(x, y)
                                 },
-                                onDragEnd = {
-                                    repeatJob?.cancel()
-                                    repeatJob = null
-                                    scope.launch {
-                                        knobOffset.animateTo(
-                                            Offset.Zero,
-                                            spring(
-                                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                stiffness = Spring.StiffnessMedium
-                                            )
-                                        )
-                                        actions.onVectorChange(0f, 0f)
-                                        actions.onReleased()
-                                    }
-                                },
-                                onDragCancel = {
-                                    repeatJob?.cancel()
-                                    repeatJob = null
-                                    scope.launch {
-                                        knobOffset.animateTo(Offset.Zero)
-                                        actions.onVectorChange(0f, 0f)
-                                        actions.onReleased()
-                                    }
-                                }
+                                onDragEnd = { recenter() },
+                                onDragCancel = { recenter() }
                             )
                         }
                     } else Modifier
@@ -316,9 +331,7 @@ fun AxisStick(
 
         LaunchedEffect(enabled) {
             if (!enabled) {
-                repeatJob?.cancel()
-                repeatJob = null
-                knobOffset.snapTo(Offset.Zero)
+                knobOffset = Offset.Zero
             }
         }
     }
@@ -330,15 +343,4 @@ private fun clampToRadius(offset: Offset, maxRadiusPx: Float): Offset {
     if (distance <= maxRadiusPx) return offset
     val scaleFactor = maxRadiusPx / distance
     return Offset(offset.x * scaleFactor, offset.y * scaleFactor)
-}
-
-private fun startRepeating(
-    scope: CoroutineScope,
-    intervalMs: Long,
-    action: () -> Unit
-): Job = scope.launch {
-    while (isActive) {
-        delay(intervalMs)
-        action()
-    }
 }
