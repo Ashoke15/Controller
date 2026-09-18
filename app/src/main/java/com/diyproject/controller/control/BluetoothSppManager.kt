@@ -10,6 +10,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -18,7 +19,8 @@ class BluetoothSppManager(
     private val context: Context,
     private val onConnected: () -> Unit,
     private val onDisconnected: () -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    private val onDataReceived: (String) -> Unit = {}
 ) {
 
     companion object {
@@ -37,6 +39,12 @@ class BluetoothSppManager(
 
     private var socket: BluetoothSocket? = null
     private var outputStream: OutputStream? = null
+    private var inputStream: InputStream? = null
+
+    private var readThread: Thread? = null
+
+    @Volatile
+    private var readerRunning: Boolean = false
 
     @Volatile
     var isConnected: Boolean = false
@@ -139,8 +147,11 @@ class BluetoothSppManager(
 
                 socket = sock
                 outputStream = sock.outputStream
+                inputStream = sock.inputStream
 
                 isConnected = true
+
+                startReadLoop(sock.inputStream)
 
                 onConnected()
 
@@ -221,12 +232,91 @@ class BluetoothSppManager(
     }
 
     // ---------------------------------------------------------
+    // Receive loop (Rx)
+    // ---------------------------------------------------------
+    //
+    // Runs on its own dedicated thread, not `executor` — a blocking
+    // InputStream.read() sitting in that single-thread pool would starve
+    // every connect()/send() queued behind it. Bytes are buffered until a
+    // '\n' (an Arduino Serial.println() terminator); a '\r' immediately
+    // before it is trimmed. A device that never sends a trailing newline
+    // simply never flushes its last partial line — same tradeoff any real
+    // serial terminal makes. Byte-by-byte ASCII casting is deliberate:
+    // simple serial firmware protocols like this one don't send multi-byte
+    // UTF-8, so there's no decoder state to get wrong mid-stream.
+
+    private fun startReadLoop(input: InputStream) {
+        readerRunning = true
+        readThread = Thread {
+            val buffer = ByteArray(1024)
+            val line = StringBuilder()
+
+            while (readerRunning) {
+                val bytesRead = try {
+                    input.read(buffer)
+                } catch (e: IOException) {
+                    if (readerRunning) {
+                        Log.e(TAG, "Read failed", e)
+                        handleReadFailure()
+                    }
+                    return@Thread
+                }
+
+                if (bytesRead == -1) {
+                    if (readerRunning) {
+                        Log.w(TAG, "Input stream closed by remote device")
+                        handleReadFailure()
+                    }
+                    return@Thread
+                }
+
+                for (i in 0 until bytesRead) {
+                    val c = buffer[i].toInt().toChar()
+                    if (c == '\n') {
+                        val text = line.toString().trimEnd('\r')
+                        line.clear()
+                        if (text.isNotEmpty()) {
+                            onDataReceived(text)
+                        }
+                    } else {
+                        line.append(c)
+                    }
+                }
+            }
+        }.apply {
+            name = "BluetoothSppManager-Rx"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun handleReadFailure() {
+        readerRunning = false
+        if (isConnected) {
+            isConnected = false
+            onDisconnected()
+        }
+        closeQuietly()
+    }
+
+    private fun stopReadLoop() {
+        readerRunning = false
+        // Not interrupting/joining here on purpose: closeQuietly() closing
+        // the socket makes the blocking read() throw immediately, which is
+        // what actually ends the loop. readerRunning already being false
+        // is what stops that IOException from being treated as a failure.
+        readThread = null
+    }
+
+    // ---------------------------------------------------------
     // Disconnect
     // ---------------------------------------------------------
 
     fun disconnect() {
 
         executor.execute {
+
+            stopReadLoop()
 
             closeQuietly()
 
@@ -248,11 +338,17 @@ class BluetoothSppManager(
         }
 
         try {
+            inputStream?.close()
+        } catch (_: IOException) {
+        }
+
+        try {
             socket?.close()
         } catch (_: IOException) {
         }
 
         outputStream = null
+        inputStream = null
         socket = null
     }
 
@@ -263,6 +359,7 @@ class BluetoothSppManager(
     fun shutdown() {
 
         try {
+            stopReadLoop()
             closeQuietly()
         } finally {
             executor.shutdownNow()

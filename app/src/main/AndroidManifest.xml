@@ -59,6 +59,11 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
+        <activity
+            android:name=".devtools.codecontrol.CodeControlActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
     </application>
 
 </manifest>
