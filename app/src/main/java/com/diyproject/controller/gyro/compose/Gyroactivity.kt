@@ -25,25 +25,7 @@ import kotlin.math.atan2
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/**
- * Gyro / Tilt control screen. Launch it exactly like the other control screens
- * — `startActivity(Intent(this, GyroActivity::class.java))` — no extras needed.
- *
- * This activity owns its own [BluetoothSppManager] and shows its own paired-device
- * picker (tap the connection pill), the same way the "Connect" pill in
- * TopBarState/TopBarActions implies the other screens do. If your app actually
- * keeps one shared/app-wide connection instead, tell me and I'll wire this screen
- * to reuse that instead of connecting independently.
- *
- * Sensor axes are remapped every frame against the display's *current* rotation
- * (see [currentDisplayRotation] / [onSensorChanged]). The activity locks to a single
- * fixed landscape orientation (see [onCreate]) precisely so that rotation can't change
- * mid-session from tilting the phone to drive — the remap still adapts to whichever
- * landscape variant (normal or reverse) the device actually launched into, but it then
- * stays put instead of flipping under your hand. "Flat" is also calibrated rather than
- * assumed: [pitchOffsetDeg]/[rollOffsetDeg] auto-zero on the first reading after
- * (re)entering the screen, and [recalibrate] re-arms that zeroing on demand.
- */
+
 class GyroActivity : ComponentActivity(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
@@ -90,10 +72,7 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
     private var lastSendTimeMs = 0L
     private val minSendIntervalMs = 60L
 
-    // Digital-mode hysteresis: once an axis is "active" it needs to fall back below a
-    // lower exit threshold (not just the entry deadzone) before it releases. This stops
-    // the command flickering between e.g. FORWARD and STOP when the phone rests right on
-    // the deadzone boundary.
+
     private val hysteresisMarginDegrees = 4f
     private var forwardActive = false
     private var backwardActive = false
@@ -103,11 +82,6 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Fixed landscape, NOT sensor-based: SCREEN_ORIENTATION_SENSOR_LANDSCAPE lets the OS
-        // flip between landscape and reverse-landscape as you tilt the phone to drive, and
-        // that flip changes the display rotation mid-session — which flips how sensor axes
-        // get remapped in onSensorChanged(), making forward/back/left/right swap under your
-        // hand. Locking to one fixed landscape orientation removes that entirely.
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         enableImmersiveMode()
 
@@ -124,8 +98,7 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
         )
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        // TYPE_GRAVITY is preferred when available: it's already gravity-isolated
-        // (no linear-acceleration noise), which is exactly what we want for a tilt sensor.
+
         motionSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY)
             ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
@@ -164,9 +137,6 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
         showDevicePickerState.value = true
     }
 
-    /** Hides the status bar and nav bar, letting the driving screen use the full display.
-     *  Swiping from an edge briefly reveals the bars again (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE)
-     *  without permanently un-hiding them. */
     private fun enableImmersiveMode() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -206,17 +176,6 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        // Raw sensor values are in the device's fixed physical frame, not the screen's
-        // current frame. SCREEN_ORIENTATION_SENSOR_LANDSCAPE can settle into normal OR
-        // reverse landscape depending on which way the phone was turned, and those two
-        // have swapped axes — so remap into screen space every frame using the display's
-        // actual current rotation rather than assuming one fixed mapping.
-        //
-        // NOTE: SensorManager.remapCoordinateSystem() is NOT used here — that API operates
-        // on rotation matrices / TYPE_ROTATION_VECTOR-style arrays, not on a raw 3-axis
-        // accelerometer/gravity vector, and throws ArrayIndexOutOfBoundsException if you
-        // hand it a plain [x, y, z]. The remap below applies the same axis swap/negation
-        // by hand instead.
         remapForRotation(event.values, currentDisplayRotation(), remappedValues)
 
         // Exponential smoothing to tame raw sensor jitter
@@ -255,13 +214,7 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { /* no-op */ }
 
-    /**
-     * Remaps a raw 3-axis sensor vector from the device's fixed physical frame into the
-     * screen's current frame, for the four possible display rotations. Equivalent to what
-     * SensorManager.remapCoordinateSystem() does for rotation matrices (axisX = which source
-     * axis, with sign, becomes the new X; axisY likewise for Y; Z tracks the physical Z axis
-     * since these are all rotations about it), but safe to call on a plain [x, y, z] vector.
-     */
+
     private fun remapForRotation(values: FloatArray, rotation: Int, out: FloatArray) {
         val x = values[0]
         val y = values[1]
@@ -289,13 +242,7 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
         pendingCalibration = true
     }
 
-    /**
-     * Immediate manual STOP, for the on-screen emergency-stop button. Bypasses the
-     * usual send-throttling path's "don't resend STOP" short-circuit isn't a
-     * concern here — sendCarCommand() already re-sends on any state change — and
-     * clears Digital-mode hysteresis so a held tilt doesn't immediately re-trigger
-     * a direction the instant this returns.
-     */
+
     private fun manualStop() {
         forwardActive = false
         backwardActive = false
@@ -335,18 +282,12 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
         sendCarCommand(command, speed = null) // digital mode: no speed byte, full-power discrete moves
     }
 
-    /** True if `value` clears the entry threshold (deadzone), or — if this axis was
-     *  already active — clears the lower exit threshold. This hysteresis prevents rapid
-     *  on/off flicker right at the deadzone boundary. */
     private fun axisExceeds(value: Float, wasActive: Boolean): Boolean {
         val exitThreshold = (deadzoneDegrees - hysteresisMarginDegrees).coerceAtLeast(0f)
         val threshold = if (wasActive) exitThreshold else deadzoneDegrees
         return value > threshold
     }
 
-    // ---------------------------------------------------------------------
-    // Analog Mode: tilt mapped to an X/Y vector -> magnitude (speed) + angle (direction)
-    // ---------------------------------------------------------------------
     private fun processAnalogMode(pitchDeg: Float, rollDeg: Float) {
         val x = applyDeadzone(rollDeg).coerceIn(-maxTiltDegrees, maxTiltDegrees) / maxTiltDegrees
         val y = applyDeadzone(pitchDeg).coerceIn(-maxTiltDegrees, maxTiltDegrees) / maxTiltDegrees
@@ -383,10 +324,6 @@ class GyroActivity : ComponentActivity(), SensorEventListener {
         if (kotlin.math.abs(value) < deadzoneDegrees) 0f
         else if (value > 0) value - deadzoneDegrees else value + deadzoneDegrees
 
-    /**
-     * Sends a command over Bluetooth, throttled so we don't flood the SPP link,
-     * but always re-sends when the command or speed actually changes.
-     */
     private fun sendCarCommand(command: String, speed: Int?) {
         val now = System.currentTimeMillis()
         val changed = command != lastSentCommand || speed != lastSentSpeed

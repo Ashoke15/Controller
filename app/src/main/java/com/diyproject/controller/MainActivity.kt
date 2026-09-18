@@ -1,137 +1,187 @@
 package com.diyproject.controller
 
-import android.os.Bundle
-import android.view.View
-import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import android.view.animation.AnimationUtils
-import com.diyproject.controller.control.compose.ControlActivity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import androidx.appcompat.app.AlertDialog
+import android.content.IntentFilter
+import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.diyproject.controller.control.compose.ControlActivity
+import com.diyproject.controller.gyro.compose.GyroActivity
+import com.diyproject.controller.home.compose.AboutDialog
+import com.diyproject.controller.home.compose.ConnectionState
+import com.diyproject.controller.home.compose.FeatureSection
+import com.diyproject.controller.home.compose.HomeFooter
+import com.diyproject.controller.home.compose.HomeScreen
+import com.diyproject.controller.home.compose.RcControllerTheme
+import com.diyproject.controller.home.compose.TemplateSection
+import com.diyproject.controller.home.compose.developerBadgeFor
+import com.diyproject.controller.joystick.compose.JoystickActivity
 import java.io.File
-
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var tvBtStatus: TextView
     private val btHelper = BluetoothStatusHelper()
+
+    // Compose-observable UI state. Reading these inside setContent{} keeps the
+    // screen in sync without introducing a ViewModel — same flow as the old
+    // updateBluetoothStatusUI() / showAboutDialog(), just Compose-driven.
+    private var connected by mutableStateOf(false)
+    private var showAboutDialog by mutableStateOf(false)
+    private var selectedTemplateId by mutableStateOf<String?>(null)
+
+    /**
+     * `isBluetoothOn()` is only a point-in-time check. Before, it was re-read
+     * in onCreate/onResume only, so a mid-session disconnect (radio turned
+     * off, RC device dropping the link) sat stale on screen until the user
+     * backgrounded and reopened the app. These three broadcasts fire the
+     * instant the adapter or a device's ACL connection actually changes, so
+     * re-checking from here is real-time rather than "current as of the last
+     * time you switched apps."
+     *
+     * We re-derive from btHelper.isBluetoothOn() rather than trusting the
+     * intent's own extras, so this stays correct no matter how that helper
+     * defines "connected" internally.
+     */
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            connected = btHelper.isBluetoothOn()
+        }
+    }
+
+    private val bluetoothStateFilter = IntentFilter().apply {
+        addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+        addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+        addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+    }
+
+    private val controlItems = listOf(
+        FeatureItem("btn_control", "Button", "D-Pad control", R.drawable.d_pad),
+        FeatureItem("joystick", "Joystick", "Analog control", R.drawable.joystick_pig),
+        FeatureItem("gyro", "Gyroscope", "Tilt control", R.drawable.gyro_pig),
+    )
+
+    private val developerItems = listOf(
+        FeatureItem("code_control", "Code Control", "Send raw commands", R.drawable.code_pig),
+        FeatureItem("terminal", "Terminal", "Serial monitor", R.drawable.terminal_pig),
+        FeatureItem("macros", "Macros", "Custom command sets", R.drawable.macros_pig),
+    )
+
+    private val templateItems = listOf(
+        FeatureItem("rc_car", "RC Car", "Classic 4-motor car", R.drawable.rc_car_pig),
+        FeatureItem("tank", "Tank Bot", "Tracked chassis", R.drawable.tank_bot_pig),
+        FeatureItem("robot_arm", "Robot Arm", "Servo arm template", R.drawable.robot_arm_pig),
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         setTheme(R.style.Theme_Controller)
-
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        tvBtStatus = findViewById(R.id.tvBtStatus)
-        updateBluetoothStatusUI()
+        supportActionBar?.hide()
 
-        setupControlSection()
-        setupDeveloperSection()
-        setupTemplateSection()
-        setupActionButtons()
-        setupFooter()
-    }
+        connected = btHelper.isBluetoothOn()
+        selectedTemplateId = templateItems.firstOrNull()?.id
 
-    override fun onResume() {
-        super.onResume()
-        updateBluetoothStatusUI()
-    }
+        setContent {
+            RcControllerTheme {
+                val versionName = remember { appVersionName() }
 
-    private fun updateBluetoothStatusUI() {
-        val dot = findViewById<View>(R.id.dotStatus)
-        val pill = findViewById<View>(R.id.btStatusPill)
+                HomeScreen(
+                    appName = stringResource(R.string.app_name),
+                    tagline = stringResource(R.string.tagline),
+                    brandIcon = painterResource(id = R.drawable.header_image),
+                    connection = ConnectionState(
+                        connected = connected,
+                        label = if (connected) {
+                            stringResource(R.string.bt_status_connected)
+                        } else {
+                            stringResource(R.string.status_disconnected)
+                        },
+                    ),
+                    controlSection = FeatureSection(
+                        title = stringResource(R.string.section_control),
+                        items = controlItems,
+                    ),
+                    developerSection = FeatureSection(
+                        title = stringResource(R.string.section_developer),
+                        items = developerItems,
+                        badgeFor = ::developerBadgeFor,
+                    ),
+                    templateSection = TemplateSection(
+                        title = stringResource(R.string.section_car_templates),
+                        items = templateItems,
+                        selectedId = selectedTemplateId,
+                    ),
+                    footer = HomeFooter(
+                        shareLabel = stringResource(R.string.btn_share),
+                        aboutLabel = stringResource(R.string.btn_about),
+                        versionLabel = "${stringResource(R.string.app_name)} \u00B7 v$versionName",
+                        madeBy = stringResource(R.string.footer_made_by),
+                    ),
+                    onTemplateSelected = { selectedTemplateId = it },
+                    onFeatureClick = ::handleFeatureClick,
+                    onShareClick = ::shareApp,
+                    onAboutClick = { showAboutDialog = true },
+                )
 
-        if (btHelper.isBluetoothOn()) {
-            tvBtStatus.text = "Connected Ready"
-            tvBtStatus.setTextColor(resources.getColor(R.color.accent_green, theme))
-            pill.setBackgroundResource(R.drawable.bg_status_pill)
-            dot.setBackgroundResource(R.drawable.bg_status_pill)
-            dot.startAnimation(AnimationUtils.loadAnimation(this, R.anim.pulse))
-        } else {
-            tvBtStatus.text = "Bluetooth Off"
-            tvBtStatus.setTextColor(resources.getColor(R.color.accent_red, theme))
-            pill.setBackgroundResource(R.drawable.bg_status_pill_off)
-            dot.setBackgroundResource(R.drawable.bg_status_pill_off)
-            dot.clearAnimation()
+                if (showAboutDialog) {
+                    AboutDialog(
+                        appName = stringResource(R.string.app_name),
+                        versionLabel = "Version $versionName",
+                        message = stringResource(R.string.about_message),
+                        madeBy = stringResource(R.string.footer_made_by),
+                        closeLabel = stringResource(R.string.btn_got_it),
+                        brandIcon = painterResource(id = R.drawable.header_image),
+                        onDismiss = { showAboutDialog = false },
+                    )
+                }
+            }
         }
     }
 
-    private fun setupFooter() {
-        val tvFooter = findViewById<TextView>(R.id.tvAppFooter)
-        try {
-            val pInfo = packageManager.getPackageInfo(packageName, 0)
-            tvFooter.text = "RC Controller · v${pInfo.versionName}"
-        } catch (e: Exception) {
-            tvFooter.text = "RC Controller"
-        }
-    }
-
-    private fun setupControlSection() {
-        val items = listOf(
-            FeatureItem("btn_control", "Button", "D-Pad control", android.R.drawable.ic_menu_directions),
-            FeatureItem("joystick", "Joystick", "Analog control", android.R.drawable.ic_menu_mylocation),
-            FeatureItem("gyro", "Gyroscope", "Tilt control", android.R.drawable.ic_menu_compass)
+    override fun onStart() {
+        super.onStart()
+        // Re-sync immediately — covers anything that changed while the
+        // activity was stopped — then stay subscribed for live updates
+        // for the whole time the app is visible.
+        connected = btHelper.isBluetoothOn()
+        ContextCompat.registerReceiver(
+            this,
+            bluetoothStateReceiver,
+            bluetoothStateFilter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        bindRecycler(R.id.rvControl, items)
     }
 
-    private fun setupDeveloperSection() {
-        val items = listOf(
-            FeatureItem("code_control", "Code Control", "Send raw commands", android.R.drawable.ic_menu_edit),
-            FeatureItem("terminal", "Terminal", "Serial monitor", android.R.drawable.ic_menu_view),
-            FeatureItem("macros", "Macros", "Custom command sets", android.R.drawable.ic_menu_manage)
-        )
-        bindRecycler(R.id.rvDeveloper, items)
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(bluetoothStateReceiver)
     }
 
-    private fun setupTemplateSection() {
-        val items = listOf(
-            FeatureItem("rc_car", "RC Car", "Classic 4-motor car", android.R.drawable.ic_menu_gallery),
-            FeatureItem("tank", "Tank Bot", "Tracked chassis", android.R.drawable.ic_menu_gallery),
-            FeatureItem("robot_arm", "Robot Arm", "Servo arm template", android.R.drawable.ic_menu_gallery)
-        )
-        bindRecycler(R.id.rvTemplates, items)
-    }
-
-    private fun bindRecycler(recyclerId: Int, items: List<FeatureItem>) {
-        val rv: RecyclerView = findViewById(recyclerId)
-        rv.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
-        rv.adapter = FeatureAdapter(items) { item ->
-            handleFeatureClick(item)
-        }
+    private fun appVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
+    } catch (e: Exception) {
+        "1.0.0"
     }
 
     private fun handleFeatureClick(item: FeatureItem) {
         when (item.id) {
-            "btn_control" -> {
-                val intent = android.content.Intent(this, ControlActivity::class.java)
-                startActivity(intent)
-            }
-            "joystick" -> {
-                val intent = android.content.Intent(
-                    this,
-                    com.diyproject.controller.joystick.compose.JoystickActivity::class.java
-                )
-                startActivity(intent)
-            }
-            "gyro" -> {
-                val intent = android.content.Intent(
-                    this,
-                    com.diyproject.controller.gyro.compose.GyroActivity::class.java
-                )
-                startActivity(intent)
-            }
-
+            "btn_control" -> startActivity(Intent(this, ControlActivity::class.java))
+            "joystick" -> startActivity(Intent(this, JoystickActivity::class.java))
+            "gyro" -> startActivity(Intent(this, GyroActivity::class.java))
         }
-    }
-
-    private fun setupActionButtons() {
-        findViewById<View>(R.id.btnShare).setOnClickListener { shareApp() }
-        findViewById<View>(R.id.btnAbout).setOnClickListener { showAboutDialog() }
     }
 
     private fun shareApp() {
@@ -144,7 +194,7 @@ class MainActivity : AppCompatActivity() {
             val apkUri = FileProvider.getUriForFile(
                 this,
                 "$packageName.fileprovider",
-                shareFile
+                shareFile,
             )
 
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -158,24 +208,5 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Couldn't share the app file", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun showAboutDialog() {
-        val versionName = try {
-            packageManager.getPackageInfo(packageName, 0).versionName
-        } catch (e: Exception) {
-            "1.0.0"
-        }
-
-        val dialogView = layoutInflater.inflate(R.layout.dialog_about, null)
-        dialogView.findViewById<TextView>(R.id.tvAboutVersion).text = "Version $versionName"
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(dialogView)
-            .create()
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-
-        dialogView.findViewById<View>(R.id.tvAboutClose).setOnClickListener { dialog.dismiss() }
-        dialog.show()
     }
 }
