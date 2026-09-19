@@ -49,9 +49,11 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.OptIn
-import androidx.compose.ui.window.Dialog
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.diyproject.controller.devtools.common.LineEnding
+import com.diyproject.controller.devtools.common.RawCommand
+import com.diyproject.controller.devtools.common.TranscriptDirection
+import com.diyproject.controller.devtools.common.TranscriptEntry
+import com.diyproject.controller.devtools.HelpDialog
 
 /**
  * Manual raw-command console — the "type anything, send it exactly as
@@ -75,7 +77,7 @@ fun CodeControlScreen(
     modifier: Modifier = Modifier
 ) {
     var inputText by remember { mutableStateOf("") }
-    var showHelpDialog by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -93,7 +95,7 @@ fun CodeControlScreen(
                 isConnected = isConnected,
                 onConnectClick = onConnectClick,
                 onClearTranscript = onClearTranscript,
-                onHelpClick = { showHelpDialog = true }
+                onHelp = { showHelp = true }
             )
 
             TranscriptPanel(
@@ -121,8 +123,12 @@ fun CodeControlScreen(
             )
         }
     }
-    if (showHelpDialog) {
-        CodeControlHelpDialog(onDismiss = { showHelpDialog = false })
+    if (showHelp) {
+        HelpDialog(
+            screenTitle = "CODE CONTROL",
+            sections = CodeControlHelpContent.sections,
+            onDismiss = { showHelp = false }
+        )
     }
 }
 
@@ -131,7 +137,7 @@ private fun HeaderRow(
     isConnected: Boolean,
     onConnectClick: () -> Unit,
     onClearTranscript: () -> Unit,
-    onHelpClick: () -> Unit
+    onHelp: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -153,7 +159,7 @@ private fun HeaderRow(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextChip(label = "HELP", onClick = onHelpClick)
+            TextChip(label = "HELP", onClick = onHelp)
             TextChip(label = "CLEAR", onClick = onClearTranscript)
             ConnectionPill(isConnected = isConnected, onClick = onConnectClick)
         }
@@ -405,46 +411,4 @@ private fun SendButton(enabled: Boolean, onClick: () -> Unit) {
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 18.dp, vertical = 14.dp)
     )
-}
-
-@Composable
-fun CodeControlHelpDialog(onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(DevToolsTheme.backgroundTop)
-                .border(1.dp, DevToolsTheme.panelBorder, RoundedCornerShape(12.dp))
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("HOW TO USE CODE CONTROL", color = DevToolsTheme.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text(
-                    text = "CLOSE",
-                    color = DevToolsTheme.textMuted,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable(onClick = onDismiss)
-                )
-            }
-
-            Text("This is a raw serial monitor for communicating directly with your hardware.", color = DevToolsTheme.textPrimary, fontSize = 11.sp)
-
-            HelpSection("TX & RX", "TX (Amber) is what you transmit. RX (Green) is what the car replies back with.")
-            HelpSection("EOL (End of Line)", "Matches Arduino Serial options. '\\n' adds a Newline. Use whatever your firmware's Serial.readStringUntil() expects to end a command.")
-            HelpSection("RECENT", "Tap any previously sent command to quickly load it back into the input box.")
-            HelpSection("BUFFER LIMIT", "Keep commands under 64 bytes to avoid overflowing the default Arduino serial buffer.")
-        }
-    }
-}
-
-@Composable
-private fun HelpSection(title: String, desc: String) {
-    Column {
-        Text(title, color = DevToolsTheme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        Text(desc, color = DevToolsTheme.textFaint, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
-    }
 }

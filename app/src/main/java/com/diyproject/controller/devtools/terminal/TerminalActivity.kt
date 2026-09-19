@@ -1,6 +1,7 @@
-package com.diyproject.controller.devtools.codecontrol
+package com.diyproject.controller.devtools.terminal
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -23,32 +24,29 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.diyproject.controller.control.BluetoothSppManager
-import java.util.concurrent.atomic.AtomicLong
 import com.diyproject.controller.devtools.common.LineEnding
 import com.diyproject.controller.devtools.common.RawCommand
 import com.diyproject.controller.devtools.common.TranscriptDirection
 import com.diyproject.controller.devtools.common.TranscriptEntry
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Hosts the raw-command console. Owns its own [BluetoothSppManager]
- * instance — same shared class the D-pad controller uses — so Code
- * Control works standalone regardless of what other screen the app was
- * last on.
- *
- * SEND writes exactly what the developer typed, plus whichever line
- * ending they picked, straight to the socket's OutputStream via
- * BluetoothSppManager.send(). Every byte the module writes back is
- * decoded live by the manager's Rx loop and appended as an RX line —
- * nothing in this transcript is simulated.
+ * Real serial monitor: owns its own [BluetoothSppManager] connection
+ * (same class the D-pad controller and Code Control use), decodes every
+ * incoming line via its Rx loop, and reflects both directions of actual
+ * traffic — nothing shown here is simulated or replayed from a fixture.
  */
-class CodeControlActivity : ComponentActivity() {
+class TerminalActivity : ComponentActivity() {
 
     private lateinit var bt: BluetoothSppManager
-    private lateinit var historyStore: CommandHistoryStore
 
     private var isConnected by mutableStateOf(false)
+    private var connectedDeviceLabel by mutableStateOf<String?>(null)
     private var lineEnding by mutableStateOf(LineEnding.NL)
-    private var history by mutableStateOf<List<String>>(emptyList())
+    private var txByteCount by mutableStateOf(0L)
+    private var rxByteCount by mutableStateOf(0L)
     private val transcript = mutableStateListOf<TranscriptEntry>()
 
     private val nextId = AtomicLong(0)
@@ -61,37 +59,49 @@ class CodeControlActivity : ComponentActivity() {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
 
-        historyStore = CommandHistoryStore(this)
-        history = historyStore.load()
-
         bt = BluetoothSppManager(
             context = this,
             onConnected = {
                 isConnected = true
-                appendSystem("connected")
+                appendSystem("connected" + (connectedDeviceLabel?.let { " to $it" } ?: ""))
             },
             onDisconnected = {
                 isConnected = false
                 appendSystem("disconnected")
+                connectedDeviceLabel = null
             },
             onError = { msg ->
                 runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                 appendSystem("error: $msg")
             },
-            onDataReceived = { line -> appendEntry(TranscriptDirection.RX, line) }
+            onDataReceived = { line ->
+                appendEntry(TranscriptDirection.RX, line)
+                // Approximate: the stripped '\n' terminator isn't in `line`
+                // anymore, so +1 accounts for it. A dropped/absent '\r'
+                // before it (CRLF senders) isn't recovered here — this is a
+                // display counter, not a byte-exact accounting ledger.
+                rxByteCount += line.toByteArray(Charsets.UTF_8).size + 1
+            }
         )
 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier, color = Color.Transparent) {
-                    CodeControlScreen(
+                    TerminalScreen(
                         isConnected = isConnected,
+                        connectedDeviceLabel = connectedDeviceLabel,
                         transcript = transcript,
-                        history = history,
+                        txByteCount = txByteCount,
+                        rxByteCount = rxByteCount,
                         lineEnding = lineEnding,
                         onLineEndingChange = { lineEnding = it },
                         onSend = { raw -> sendRaw(raw) },
-                        onClearTranscript = { transcript.clear() },
+                        onClearTranscript = {
+                            transcript.clear()
+                            txByteCount = 0L
+                            rxByteCount = 0L
+                        },
+                        onExportTranscript = { exportTranscript() },
                         onConnectClick = { checkBluetoothPermissionsAndShowPicker() }
                     )
                 }
@@ -103,7 +113,7 @@ class CodeControlActivity : ComponentActivity() {
         val withEnding = RawCommand.withLineEnding(raw, lineEnding)
         bt.send(withEnding)
         appendEntry(TranscriptDirection.TX, withEnding)
-        history = historyStore.record(raw)
+        txByteCount += RawCommand.byteLength(withEnding)
     }
 
     private fun appendEntry(direction: TranscriptDirection, raw: String) {
@@ -113,22 +123,34 @@ class CodeControlActivity : ComponentActivity() {
         }
     }
 
-    private fun appendSystem(message: String) {
-        appendEntry(TranscriptDirection.SYSTEM, message)
+    private fun appendSystem(message: String) = appendEntry(TranscriptDirection.SYSTEM, message)
+
+    private fun exportTranscript() {
+        if (transcript.isEmpty()) {
+            Toast.makeText(this, "Nothing to export yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+        val body = transcript.joinToString("\n") { entry ->
+            val tag = when (entry.direction) {
+                TranscriptDirection.TX -> "TX"
+                TranscriptDirection.RX -> "RX"
+                TranscriptDirection.SYSTEM -> "--"
+            }
+            "${stamp.format(entry.timestampMs)}  $tag  ${entry.raw.replace("\r\n", "\\r\\n").replace("\n", "\\n").replace("\r", "\\r")}"
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Terminal log")
+            putExtra(Intent.EXTRA_TEXT, body)
+        }
+        startActivity(Intent.createChooser(intent, "Export terminal log"))
     }
 
     private fun checkBluetoothPermissionsAndShowPicker() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
-                    102
-                )
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 103)
                 return
             }
         }
@@ -139,17 +161,21 @@ class CodeControlActivity : ComponentActivity() {
         try {
             val devices = bt.getPairedDevices()
             when {
-                devices.isEmpty() -> {
-                    Toast.makeText(this, "No paired devices. Pair your HC-05 first.", Toast.LENGTH_LONG).show()
-                }
+                devices.isEmpty() -> Toast.makeText(this, "No paired devices. Pair your HC-05 first.", Toast.LENGTH_LONG).show()
                 devices.size == 1 -> {
-                    bt.connect(devices.first())
+                    val d = devices.first()
+                    connectedDeviceLabel = d.name ?: d.address
+                    bt.connect(d)
                 }
                 else -> {
                     val names = devices.map { v -> v.name ?: v.address }.toTypedArray()
                     AlertDialog.Builder(this)
                         .setTitle("Select device")
-                        .setItems(names) { _, which -> bt.connect(devices[which]) }
+                        .setItems(names) { _, which ->
+                            val d = devices[which]
+                            connectedDeviceLabel = d.name ?: d.address
+                            bt.connect(d)
+                        }
                         .show()
                 }
             }
@@ -164,6 +190,6 @@ class CodeControlActivity : ComponentActivity() {
     }
 
     private companion object {
-        const val MAX_TRANSCRIPT_ENTRIES = 500
+        const val MAX_TRANSCRIPT_ENTRIES = 1000
     }
 }
