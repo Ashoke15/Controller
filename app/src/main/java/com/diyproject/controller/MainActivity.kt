@@ -21,6 +21,7 @@ import androidx.core.content.FileProvider
 import com.diyproject.controller.control.compose.ControlActivity
 import com.diyproject.controller.devtools.codecontrol.CodeControlActivity
 import com.diyproject.controller.devtools.terminal.TerminalActivity
+import com.diyproject.controller.devtools.macros.MacroActivity
 import com.diyproject.controller.gyro.compose.GyroActivity
 import com.diyproject.controller.home.compose.AboutDialog
 import com.diyproject.controller.home.compose.ConnectionState
@@ -185,6 +186,8 @@ class MainActivity : AppCompatActivity() {
             "gyro" -> startActivity(Intent(this, GyroActivity::class.java))
             "code_control" -> startActivity(Intent(this, CodeControlActivity::class.java))
             "terminal" ->startActivity(Intent(this, TerminalActivity::class.java))
+            "macros" -> startActivity(Intent(this, MacroActivity::class.java))
+
         }
     }
 

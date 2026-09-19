@@ -69,6 +69,11 @@
             android:exported="false"
             android:screenOrientation="landscape" />
 
+        <activity
+            android:name=".devtools.macros.MacroActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+
     </application>
 
 </manifest>
